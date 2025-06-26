@@ -415,17 +415,93 @@ def main(page: ft.Page):
             for i, chapter in enumerate(app_state.chapters):
                 main_view_content.controls.append(
                     ft.Container(
-                        content=ft.FilledButton(
-                            text=f"{chapter['title']}",
-                            icon=ft.Icons.MENU_BOOK,
-                            on_click=lambda e, idx=i: navigate_to_study_options(idx),
-                            width=button_width,
-                            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8 if is_mobile else 10))
-                        ),
+                        content=ft.Row([
+                            ft.FilledButton(
+                                text=f"{chapter['title']}",
+                                icon=ft.Icons.MENU_BOOK,
+                                on_click=lambda e, idx=i: navigate_to_study_options(idx),
+                                expand=True,
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8 if is_mobile else 10))
+                            ),
+                            ft.IconButton(
+                                icon=ft.Icons.VISIBILITY,
+                                icon_size=icon_size,
+                                tooltip="Preview Chapter Content",
+                                on_click=lambda e, idx=i: show_chapter_content_dialog(idx),
+                                style=ft.ButtonStyle(
+                                    shape=ft.RoundedRectangleBorder(radius=8 if is_mobile else 10),
+                                    bgcolor=ft.Colors.BLUE_GREY,
+                                    color=ft.Colors.WHITE
+                                )
+                            )
+                        ], spacing=5),
                         margin=ft.margin.symmetric(vertical=2 if is_mobile else 5)
                     )
                 )
         page.update()
+
+    def show_chapter_content_dialog(chapter_index: int):
+        """Show chapter content in a scrollable dialog"""
+        if chapter_index < 0 or chapter_index >= len(app_state.chapters):
+            return
+        
+        chapter = app_state.chapters[chapter_index]
+        
+        # Create scrollable content container
+        content_text = ft.Text(
+            chapter['content'],
+            size=font_size_small + 1,
+            selectable=True,  # Allow text selection for copying
+            no_wrap=False,  # Allow text wrapping
+        )
+        
+        content_container = ft.Container(
+            content=content_text,
+            padding=ft.padding.all(15 if is_mobile else 20),
+            width=500 if not is_mobile else None,
+            height=400 if not is_mobile else 300,
+        )
+        
+        scrollable_content = ft.Column(
+            controls=[content_container],
+            scroll=ft.ScrollMode.ADAPTIVE,
+            expand=True,
+        )
+        
+        def close_dialog(e):
+            page.close(dialog)
+        
+        dialog = ft.AlertDialog(
+            title=ft.Row([
+                ft.Icon(ft.Icons.VISIBILITY, size=icon_size),
+                ft.Text(f"Chapter Content: {chapter['title']}", 
+                       size=font_size_medium, 
+                       weight=ft.FontWeight.BOLD,
+                       expand=True),
+            ]),
+            content=ft.Container(
+                content=scrollable_content,
+                width=600 if not is_mobile else (page.width * 0.9 if page.width else 350),
+                height=450 if not is_mobile else (page.height * 0.6 if page.height else 400),
+            ),
+            actions=[
+                ft.Container(
+                    content=ft.FilledButton(
+                        "Close",
+                        icon=ft.Icons.CLOSE,
+                        on_click=close_dialog,
+                        style=ft.ButtonStyle(
+                            bgcolor=ft.Colors.BLUE,
+                            color=ft.Colors.WHITE
+                        )
+                    ),
+                    alignment=ft.alignment.center
+                )
+            ],
+            actions_alignment=ft.MainAxisAlignment.CENTER,
+        )
+        
+        page.open(dialog)
 
     # --- Navigation Logic ---
     def navigate_to_home(e=None):
