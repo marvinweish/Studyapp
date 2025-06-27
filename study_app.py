@@ -1164,4 +1164,19 @@ def main(page: ft.Page):
 
 # To run the app
 if __name__ == "__main__":
-    ft.app(target=main)
+    # Check if running in web environment (AWS App Runner, etc.)
+    import os
+    port = int(os.environ.get('PORT', 8080))
+    
+    if os.environ.get('AWS_EXECUTION_ENV') or os.environ.get('PORT'):
+        # Running on AWS or web environment
+        ft.app(
+            target=main,
+            port=port,
+            host='0.0.0.0',
+            view=ft.AppView.WEB_BROWSER,
+            web_renderer=ft.WebRenderer.HTML
+        )
+    else:
+        # Running locally
+        ft.app(target=main)

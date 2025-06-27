@@ -1,21 +1,18 @@
 version: 1.0
-runtime: python3.11
+runtime: python3
 build:
   commands:
-    pre-build:
+    build:
       - echo "Installing dependencies..."
       - pip install --upgrade pip
-    build:
-      - echo "Building application..."
-      - pip install -r requirements-aws.txt
-    post-build:
-      - echo "Build completed"
+      - pip install -r requirements.txt
 run:
-  runtime-version: python3.11
-  command: python app.py
+  runtime-version: 3.11
+  command: python study_app.py
   network:
     port: 8080
-    env: PORT
   env:
-    - PORT=8080
-    - PYTHONPATH=/var/task
+    - name: PORT
+      value: "8080"
+    - name: FLET_WEB_RENDERER
+      value: "html"
