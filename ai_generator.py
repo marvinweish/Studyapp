@@ -9,6 +9,13 @@ from dotenv import load_dotenv
 # Load environment variables from key.env file
 load_dotenv('key.env')
 
+# Try to import mobile config for mobile compatibility
+try:
+    from mobile_config import mobile_config
+    USE_MOBILE_CONFIG = True
+except ImportError:
+    USE_MOBILE_CONFIG = False
+
 try:
     from config import GEMINI_API_KEY, DEFAULT_FLASHCARD_COUNT, DEFAULT_QUIZ_QUESTIONS, DEFAULT_TEST_QUESTIONS
 except ImportError:
@@ -22,13 +29,16 @@ class AIStudyGenerator:
     
     def __init__(self, api_key: str | None = None):
         """Initialize with Gemini API key"""
-        # Priority order: parameter > key.env file > config.py > environment variable
-        self.api_key = (
-            api_key or 
-            os.getenv('GEMINI_API_KEY') or  # From key.env file (loaded by dotenv)
-            GEMINI_API_KEY or               # From config.py
-            os.environ.get('GEMINI_API_KEY') # From system environment
-        )
+        # Priority order: parameter > mobile config > key.env file > config.py > environment variable
+        if USE_MOBILE_CONFIG and mobile_config.has_api_key():
+            self.api_key = mobile_config.get_api_key()
+        else:
+            self.api_key = (
+                api_key or 
+                os.getenv('GEMINI_API_KEY') or  # From key.env file (loaded by dotenv)
+                GEMINI_API_KEY or               # From config.py
+                os.environ.get('GEMINI_API_KEY') # From system environment
+            )
         
         if self.api_key:
             os.environ["GOOGLE_API_KEY"] = self.api_key
@@ -291,3 +301,73 @@ class AIStudyGenerator:
                 }
             ]
         }
+    
+    # Synchronous wrapper methods for mobile/desktop compatibility
+    def generate_flashcards_sync(self, chapter_content: str, max_cards: int = None) -> List[Dict[str, str]]:
+        """Synchronous wrapper for generate_flashcards"""
+        if max_cards is None:
+            max_cards = DEFAULT_FLASHCARD_COUNT
+        return asyncio.run(self.generate_flashcards(chapter_content, max_cards))
+    
+    def generate_quiz_sync(self, chapter_content: str, num_questions: int = None) -> Dict[str, Any]:
+        """Synchronous wrapper for generate_quiz"""
+        if num_questions is None:
+            num_questions = DEFAULT_QUIZ_QUESTIONS
+        return asyncio.run(self.generate_quiz(chapter_content, num_questions))
+    
+    def generate_test_sync(self, chapter_content: str, num_questions: int = None) -> Dict[str, Any]:
+        """Synchronous wrapper for generate_test"""
+        if num_questions is None:
+            num_questions = DEFAULT_TEST_QUESTIONS
+        return asyncio.run(self.generate_test(chapter_content, num_questions))
+    
+    async def generate_summary(self, chapter_content: str) -> str:
+        """Generate a summary of the study content"""
+        if not self.api_key or not self.model:
+            return self._get_mock_summary()
+        
+        prompt = f"""
+        Please create a comprehensive summary of the following study material. 
+        Make it concise but include all key points and main concepts.
+        Format it with clear headings and bullet points where appropriate.
+        
+        Study Material:
+        {chapter_content}
+        
+        Summary:
+        """
+        
+        try:
+            response = await self._generate_response(prompt)
+            return response.strip()
+        except Exception as e:
+            print(f"Error generating summary: {str(e)}")
+            return self._get_mock_summary()
+    
+    def generate_summary_sync(self, chapter_content: str) -> str:
+        """Synchronous wrapper for generate_summary"""
+        return asyncio.run(self.generate_summary(chapter_content))
+    
+    def _get_mock_summary(self) -> str:
+        """Fallback mock summary when API is unavailable"""
+        return """
+        # Study Material Summary
+        
+        ## Key Points
+        • This content covers important study concepts
+        • Active learning techniques are more effective than passive reading
+        • Regular review and practice improve retention
+        
+        ## Main Topics
+        • Study methods and techniques
+        • Memory and retention strategies
+        • Learning optimization
+        
+        ## Conclusion
+        Effective studying requires active engagement with the material through techniques like active recall, spaced repetition, and self-testing.
+        """
+    
+    async def _generate_response(self, prompt: str) -> str:
+        """Helper method to generate response from the AI model"""
+        response = await asyncio.to_thread(self.model.generate_content, prompt)
+        return response.text

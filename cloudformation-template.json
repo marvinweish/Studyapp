@@ -1,0 +1,98 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "AWS CloudFormation template for AI Study Buddy application using free tier resources",
+  "Parameters": {
+    "KeyName": {
+      "Type": "AWS::EC2::KeyPair::KeyName",
+      "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instance",
+      "Default": "my-key-pair"
+    },
+    "GeminiApiKey": {
+      "Type": "String",
+      "Description": "Your Gemini API key for AI functionality",
+      "NoEcho": true,
+      "Default": ""
+    }
+  },
+  "Mappings": {
+    "RegionMap": {
+      "us-east-1": {"AMI": "ami-0abcdef1234567890"},
+      "us-west-2": {"AMI": "ami-0abcdef1234567890"},
+      "eu-west-1": {"AMI": "ami-0abcdef1234567890"}
+    }
+  },
+  "Resources": {
+    "StudyAppSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group for Study Buddy application",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "SSH access"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "HTTP access"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8080,
+            "ToPort": 8080,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Application port"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "StudyApp-SecurityGroup"
+          }
+        ]
+      }
+    },
+    "StudyAppInstance": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "ImageId": "ami-0abcdef1234567890",
+        "InstanceType": "t2.micro",
+        "KeyName": {"Ref": "KeyName"},
+        "SecurityGroupIds": [{"Ref": "StudyAppSecurityGroup"}],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Sub": [
+              "#!/bin/bash\necho 'GEMINI_API_KEY=${GeminiApiKey}' > /home/ec2-user/.env\n# Add the ec2-setup.sh script content here\n",
+              {"GeminiApiKey": {"Ref": "GeminiApiKey"}}
+            ]
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "StudyApp-Instance"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "InstanceId": {
+      "Description": "Instance ID of the EC2 instance",
+      "Value": {"Ref": "StudyAppInstance"}
+    },
+    "PublicIP": {
+      "Description": "Public IP address of the EC2 instance",
+      "Value": {"Fn::GetAtt": ["StudyAppInstance", "PublicIp"]}
+    },
+    "ApplicationURL": {
+      "Description": "URL to access the Study Buddy application",
+      "Value": {"Fn::Sub": "http://${StudyAppInstance.PublicIp}"}
+    }
+  }
+}

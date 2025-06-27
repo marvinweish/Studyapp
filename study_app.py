@@ -3,8 +3,16 @@ import re
 import asyncio
 import json
 import os
-from file_processor import FileProcessor, ContentOrganizer, get_supported_extensions, check_dependencies
-from ai_generator import AIStudyGenerator
+
+# Mobile-compatible imports with fallbacks
+try:
+    from mobile_file_processor import FileProcessor, ContentOrganizer, get_supported_extensions, check_dependencies
+    from mobile_ai_generator import AIStudyGenerator
+    print("✅ Using mobile-compatible modules")
+except ImportError:
+    print("📱 Mobile modules not found, using desktop versions")
+    from file_processor import FileProcessor, ContentOrganizer, get_supported_extensions, check_dependencies
+    from ai_generator import AIStudyGenerator
 
 # A simple class to hold the state of our application
 class AppState:

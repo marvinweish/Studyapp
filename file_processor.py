@@ -15,6 +15,7 @@ for use by the flashcards, quiz, and test functions.
 import os
 import re
 import zipfile
+import platform
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,6 +69,7 @@ try:
         
         # Configure poppler path for pdf2image
         poppler_paths = [
+            os.path.join(os.path.dirname(__file__), "poppler-21.11.0", "Library", "bin"),
             r"C:\poppler\poppler-21.11.0\Library\bin",
             r"C:\poppler\Library\bin",
             r"C:\Program Files\poppler\bin"
@@ -257,14 +259,26 @@ class FileProcessor:
         )
     
     def _process_pdf_with_ocr(self, file_path: str) -> str:
-        """Process PDF using OCR for image-based PDFs and return cleaned combined text"""
+        """Process PDF using OCR for image-based PDFs with intelligent content organization"""
         if not OCR_AVAILABLE:
             raise ImportError("OCR dependencies required. Install with: pip install pytesseract pdf2image pillow")
         
         try:
             # Convert PDF pages to images
-            images = convert_from_path(file_path)
-            raw_text_chunks = []
+            poppler_path = None
+            if platform.system() == "Windows":
+                # Try to find poppler in the project directory first
+                project_poppler = os.path.join(os.path.dirname(__file__), "poppler-21.11.0", "Library", "bin")
+                if os.path.exists(project_poppler):
+                    poppler_path = project_poppler
+            
+            # Convert PDF with proper poppler path
+            if poppler_path:
+                images = convert_from_path(file_path, poppler_path=poppler_path)
+            else:
+                images = convert_from_path(file_path)
+                
+            page_texts = []
             
             for page_num, image in enumerate(images):
                 try:
@@ -275,18 +289,20 @@ class FileProcessor:
                     custom_config = r'--oem 3 --psm 6'  # Better OCR settings
                     text = pytesseract.image_to_string(image, lang='eng', config=custom_config)
                     if text.strip():
-                        raw_text_chunks.append(text.strip())
+                        cleaned_page_text = self._clean_ocr_text(text.strip())
+                        page_texts.append({
+                            'page': page_num + 1,
+                            'text': cleaned_page_text,
+                            'raw_text': text.strip()
+                        })
                 except Exception as e:
                     print(f"OCR error on page {page_num + 1}: {str(e)}")
                     continue
             
-            # Combine all text into one string
-            combined_text = '\n\n'.join(raw_text_chunks)
+            # Intelligently combine pages into coherent content
+            organized_text = self._organize_ocr_content(page_texts)
             
-            # Clean the OCR artifacts
-            cleaned_text = self._clean_ocr_text(combined_text)
-            
-            return cleaned_text
+            return organized_text
         
         except Exception as e:
             raise ValueError(f"OCR processing failed: {str(e)}")
@@ -471,6 +487,158 @@ class FileProcessor:
         except Exception as e:
             raise ValueError(f"Error processing EPUB: {str(e)}")
     
+    def _organize_ocr_content(self, page_texts: List[Dict]) -> str:
+        """Intelligently organize OCR content from multiple pages into coherent sections"""
+        if not page_texts:
+            return ""
+        
+        # Combine all text first with clear page separators
+        all_text = '\n\n'.join([page['text'] for page in page_texts])
+        
+        # For now, use a simpler approach - split into topic-based sections
+        # by looking for clear topic breaks and organize accordingly
+        sections = self._create_topic_sections(all_text)
+        
+        if sections:
+            return '\n\n\n'.join(sections)
+        else:
+            # Fallback: return the cleaned combined text with basic organization
+            return self._basic_organize_text(all_text)
+    
+    def _create_topic_sections(self, text: str) -> List[str]:
+        """Create topic-based sections from OCR text"""
+        sections = []
+        
+        # Split into paragraphs
+        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+        
+        if not paragraphs:
+            return []
+        
+        # Group paragraphs into logical sections
+        current_section = []
+        current_topic = None
+        
+        for paragraph in paragraphs:
+            # Skip very short paragraphs (likely artifacts)
+            if len(paragraph) < 20:
+                continue
+            
+            # Check if this looks like a new topic/section header
+            if self._is_topic_header(paragraph):
+                # Save previous section if it exists
+                if current_section:
+                    section_content = '\n\n'.join(current_section)
+                    if len(section_content) > 100:  # Only include substantial sections
+                        title = current_topic or f"Section {len(sections) + 1}"
+                        sections.append(f"{title}\n{'=' * len(title)}\n\n{section_content}")
+                
+                # Start new section
+                current_topic = self._extract_topic_title(paragraph)
+                current_section = [paragraph]
+            else:
+                # Add to current section
+                current_section.append(paragraph)
+        
+        # Add final section
+        if current_section:
+            section_content = '\n\n'.join(current_section)
+            if len(section_content) > 100:
+                title = current_topic or f"Section {len(sections) + 1}"
+                sections.append(f"{title}\n{'=' * len(title)}\n\n{section_content}")
+        
+        return sections
+    
+    def _is_topic_header(self, paragraph: str) -> bool:
+        """Check if a paragraph looks like a topic header"""
+        # Skip common headers/footers
+        if any(skip in paragraph.lower() for skip in [
+            'better health channel', 'betterhealth', 'pm vitamins', 'http://', 'www.'
+        ]):
+            return False
+        
+        # Look for topic indicators
+        lines = paragraph.split('\n')
+        if lines:
+            first_line = lines[0].strip()
+            
+            # Check for topic indicators
+            if (len(first_line) < 50 and  # Short enough to be a header
+                len(first_line) > 5 and   # Long enough to be meaningful
+                not first_line.endswith('.') and  # Doesn't end with period
+                not first_line.startswith('e ') and  # Not a bullet point
+                any(word.lower() in first_line.lower() for word in [
+                    'vitamin', 'mineral', 'calcium', 'iron', 'zinc', 'potassium', 
+                    'sodium', 'deficiency', 'dietary', 'sources', 'food'
+                ])):
+                return True
+        
+        return False
+    
+    def _extract_topic_title(self, paragraph: str) -> str:
+        """Extract a clean topic title from a paragraph"""
+        lines = paragraph.split('\n')
+        if lines:
+            first_line = lines[0].strip()
+            
+            # Clean up common artifacts
+            first_line = re.sub(r'^[°•\-\s]+', '', first_line)  # Remove bullet points
+            first_line = re.sub(r'\s+', ' ', first_line)        # Normalize spaces
+            
+            # Capitalize properly
+            if first_line and len(first_line) < 80:
+                return first_line.title()
+        
+        return "Topic Section"
+    
+    def _basic_organize_text(self, text: str) -> str:
+        """Basic text organization as fallback"""
+        # Split into paragraphs and group by estimated topic changes
+        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip() and len(p.strip()) > 20]
+        
+        if not paragraphs:
+            return text
+        
+        # Group paragraphs into sections of reasonable length
+        sections = []
+        current_section = []
+        current_length = 0
+        target_length = 1500  # Target characters per section
+        
+        for paragraph in paragraphs:
+            # Skip headers/footers
+            if any(skip in paragraph.lower() for skip in [
+                'better health channel', 'betterhealth', 'pm vitamins'
+            ]):
+                continue
+            
+            if current_length + len(paragraph) > target_length and current_section:
+                # Save current section
+                section_content = '\n\n'.join(current_section)
+                title = f"Section {len(sections) + 1}"
+                sections.append(f"{title}\n{'=' * len(title)}\n\n{section_content}")
+                
+                current_section = [paragraph]
+                current_length = len(paragraph)
+            else:
+                current_section.append(paragraph)
+                current_length += len(paragraph)
+        
+        # Add final section
+        if current_section:
+            section_content = '\n\n'.join(current_section)
+            title = f"Section {len(sections) + 1}"
+            sections.append(f"{title}\n{'=' * len(title)}\n\n{section_content}")
+        
+        return '\n\n\n'.join(sections)
+    
+    # Legacy methods - keeping for reference but not used in new implementation
+    # def _split_into_sentences(self, text: str) -> List[str]:
+    # def _group_sentences_by_topic(self, sentences: List[str]) -> Dict[str, List[str]]:
+    # def _extract_keywords(self, text: str) -> set:
+    # def _generate_section_title(self, sentences: List[str], section_num: int) -> str:
+    
+
 class ContentOrganizer:
     """Organizes processed content into chapters and topics"""
     
@@ -485,9 +653,13 @@ class ContentOrganizer:
         ]
     
     def organize_into_chapters(self, content: ProcessedContent, min_chapter_length: int = 500) -> List[Chapter]:
-        """Organize content into chapters based on patterns"""
+        """Organize content into chapters based on patterns or intelligent content analysis"""
         text = content.content
         chapters = []
+        
+        # Check if this is likely OCR content (contains section headers with '=' markers)
+        if self._is_ocr_organized_content(text):
+            return self._organize_ocr_chapters(content)
         
         # Try to find chapters using patterns
         found_chapters = self._find_chapters_by_pattern(text)
@@ -501,8 +673,47 @@ class ContentOrganizer:
                         index=i
                     ))
         else:
-            # If no chapters found, split by length or use whole content
+            # If no chapters found, use intelligent content splitting
             chapters = self._split_by_length(content, min_chapter_length)
+        
+        return chapters
+    
+    def _is_ocr_organized_content(self, text: str) -> bool:
+        """Check if content appears to be organized by OCR processing (has section headers with '=' markers)"""
+        return bool(re.search(r'\n[A-Za-z][^=\n]*\n=+\n', text))
+    
+    def _organize_ocr_chapters(self, content: ProcessedContent) -> List[Chapter]:
+        """Organize content that was already structured by OCR processing"""
+        text = content.content
+        chapters = []
+        
+        # Split by section headers (lines followed by equals signs)
+        sections = re.split(r'\n([A-Za-z][^=\n]*)\n=+\n', text)
+        
+        if len(sections) > 1:
+            # First section might be introduction or summary
+            if sections[0].strip():
+                chapters.append(Chapter(
+                    title="Introduction",
+                    content=sections[0].strip(),
+                    index=0
+                ))
+            
+            # Process remaining sections
+            for i in range(1, len(sections), 2):
+                if i + 1 < len(sections):
+                    title = sections[i].strip()
+                    section_content = sections[i + 1].strip()
+                    
+                    if section_content and len(section_content) > 100:  # Minimum content length
+                        chapters.append(Chapter(
+                            title=title,
+                            content=section_content,
+                            index=len(chapters)
+                        ))
+        else:
+            # Fallback to length-based splitting
+            chapters = self._split_by_length(content, 500)
         
         return chapters
     
@@ -517,6 +728,22 @@ class ContentOrganizer:
     def _extract_chapters_from_matches(self, text: str, matches: List) -> List[tuple]:
         """Extract chapter content based on regex matches"""
         chapters = []
+        
+        for i, match in enumerate(matches):
+            title = match.group(1).strip()
+            start_pos = match.end()
+            
+            # Find the end position (start of next chapter or end of text)
+            if i + 1 < len(matches):
+                end_pos = matches[i + 1].start()
+            else:
+                end_pos = len(text)
+            
+            content = text[start_pos:end_pos].strip()
+            if content:
+                chapters.append((title, content))
+        
+        return chapters
         
         for i, match in enumerate(matches):
             title = match.group(1)
@@ -571,7 +798,7 @@ class ContentOrganizer:
             ))
         
         return chapters
-    
+
     def extract_topics(self, chapters: List[Chapter], max_topics: int = 20) -> List[str]:
         """Extract main topics from chapters for quiz/test generation"""
         topics = set()
@@ -594,7 +821,7 @@ class ContentOrganizer:
                 break
         
         return list(topics)[:max_topics]
-
+    
 
 # Convenience functions
 def process_file(file_path: str) -> ProcessedContent:

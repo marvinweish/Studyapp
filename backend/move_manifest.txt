@@ -1,0 +1,1 @@
+Moved all main Python scripts and modules from project root to backend/ for web hosting structure.

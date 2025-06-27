@@ -1,0 +1,21 @@
+version: 1.0
+runtime: python3.11
+build:
+  commands:
+    pre-build:
+      - echo "Installing dependencies..."
+      - pip install --upgrade pip
+    build:
+      - echo "Building application..."
+      - pip install -r requirements-aws.txt
+    post-build:
+      - echo "Build completed"
+run:
+  runtime-version: python3.11
+  command: python app.py
+  network:
+    port: 8080
+    env: PORT
+  env:
+    - PORT=8080
+    - PYTHONPATH=/var/task

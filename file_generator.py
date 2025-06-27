@@ -374,8 +374,11 @@ def generate_pptx_complex_presentation():
         title.text = "Important Heading Only"
     # Add a custom text box
     try:
-        left = top = width = height = PPTXInches(1)
-        txBox = slide.shapes.add_textbox(left, top + PPTXInches(1), PPTXInches(5), PPTXInches(2))
+        left = PPTXInches(1)
+        top = PPTXInches(1)
+        width = PPTXInches(1)
+        height = PPTXInches(1)
+        txBox = slide.shapes.add_textbox(left, top + PPTXInches(1), PPTXInches(5), PPTXInches(2)) # type: ignore
         tf = txBox.text_frame
         p = tf.add_paragraph()
         p.text = "This is a custom text box. Your app needs to find text not just in default placeholders."
@@ -394,7 +397,7 @@ def generate_pptx_complex_presentation():
         width = PPTXInches(4)
         height = PPTXInches(3)
         slide.shapes.add_textbox(left, top, width, height).text_frame.text = "--- Placeholder for an Image Here ---"
-        slide.shapes.add_textbox(left + width + PPTXInches(0.5), top, width, height).text_frame.text = "Text next to the image placeholder."
+        slide.shapes.add_textbox(left + width + PPTXInches(0.5), top, width, height).text_frame.text = "Text next to the image placeholder." # type: ignore
     except Exception:
         # Fallback if textbox creation fails
         pass
@@ -408,14 +411,14 @@ def generate_pptx_complex_presentation():
 
     left_body = slide.shapes.placeholders[1]
     try:
-        left_tf = left_body.text_frame
+        left_tf = left_body.text_frame # type: ignore
         left_tf.text = "Left column content:\n- Point A\n- Point B"
     except:
         pass
 
     right_body = slide.shapes.placeholders[2]
     try:
-        right_tf = right_body.text_frame
+        right_tf = right_body.text_frame # type: ignore
         right_tf.text = "Right column content:\n- Point X\n- Point Y"
     except:
         pass
