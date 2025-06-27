@@ -1,0 +1,282 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "AWS ECS Fargate deployment for Study Buddy application",
+  "Parameters": {
+    "GeminiApiKey": {
+      "Type": "String",
+      "Description": "Your Gemini API key for AI functionality",
+      "NoEcho": true
+    },
+    "VpcId": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "VPC ID where the service will be deployed"
+    },
+    "SubnetIds": {
+      "Type": "List<AWS::EC2::Subnet::Id>",
+      "Description": "Subnet IDs for the service (at least 2 in different AZs)"
+    },
+    "ImageUri": {
+      "Type": "String",
+      "Description": "ECR image URI for the Study Buddy application"
+    }
+  },
+  "Resources": {
+    "ECSCluster": {
+      "Type": "AWS::ECS::Cluster",
+      "Properties": {
+        "ClusterName": "studyapp-cluster",
+        "CapacityProviders": ["FARGATE"],
+        "DefaultCapacityProviderStrategy": [
+          {
+            "CapacityProvider": "FARGATE",
+            "Weight": 1
+          }
+        ]
+      }
+    },
+    "TaskExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "SecretsManagerAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "secretsmanager:GetSecretValue"
+                  ],
+                  "Resource": {"Ref": "GeminiApiSecret"}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "TaskRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        }
+      }
+    },
+    "GeminiApiSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Name": "studyapp/gemini-api-key",
+        "Description": "Gemini API key for Study Buddy application",
+        "SecretString": {"Ref": "GeminiApiKey"}
+      }
+    },
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/ecs/studyapp",
+        "RetentionInDays": 7
+      }
+    },
+    "TaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": "studyapp-task",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": ["FARGATE"],
+        "Cpu": "512",
+        "Memory": "1024",
+        "ExecutionRoleArn": {"Ref": "TaskExecutionRole"},
+        "TaskRoleArn": {"Ref": "TaskRole"},
+        "ContainerDefinitions": [
+          {
+            "Name": "studyapp-container",
+            "Image": {"Ref": "ImageUri"},
+            "PortMappings": [
+              {
+                "ContainerPort": 8080,
+                "Protocol": "tcp"
+              }
+            ],
+            "Essential": true,
+            "Environment": [
+              {
+                "Name": "PORT",
+                "Value": "8080"
+              },
+              {
+                "Name": "FLET_WEB_RENDERER",
+                "Value": "html"
+              }
+            ],
+            "Secrets": [
+              {
+                "Name": "GEMINI_API_KEY",
+                "ValueFrom": {"Ref": "GeminiApiSecret"}
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {"Ref": "LogGroup"},
+                "awslogs-region": {"Ref": "AWS::Region"},
+                "awslogs-stream-prefix": "ecs"
+              }
+            },
+            "HealthCheck": {
+              "Command": [
+                "CMD-SHELL",
+                "curl -f http://localhost:8080/ || exit 1"
+              ],
+              "Interval": 30,
+              "Timeout": 5,
+              "Retries": 3,
+              "StartPeriod": 60
+            }
+          }
+        ]
+      }
+    },
+    "SecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group for Study Buddy ECS service",
+        "VpcId": {"Ref": "VpcId"},
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8080,
+            "ToPort": 8080,
+            "SourceSecurityGroupId": {"Ref": "LoadBalancerSecurityGroup"}
+          }
+        ]
+      }
+    },
+    "LoadBalancerSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group for Application Load Balancer",
+        "VpcId": {"Ref": "VpcId"},
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    "LoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties": {
+        "Name": "studyapp-alb",
+        "Scheme": "internet-facing",
+        "Type": "application",
+        "Subnets": {"Ref": "SubnetIds"},
+        "SecurityGroups": [{"Ref": "LoadBalancerSecurityGroup"}]
+      }
+    },
+    "TargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "Name": "studyapp-targets",
+        "Port": 8080,
+        "Protocol": "HTTP",
+        "VpcId": {"Ref": "VpcId"},
+        "TargetType": "ip",
+        "HealthCheckPath": "/",
+        "HealthCheckIntervalSeconds": 30,
+        "HealthCheckTimeoutSeconds": 5,
+        "HealthyThresholdCount": 2,
+        "UnhealthyThresholdCount": 3
+      }
+    },
+    "Listener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "DefaultActions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": {"Ref": "TargetGroup"}
+          }
+        ],
+        "LoadBalancerArn": {"Ref": "LoadBalancer"},
+        "Port": 80,
+        "Protocol": "HTTP"
+      }
+    },
+    "ECSService": {
+      "Type": "AWS::ECS::Service",
+      "DependsOn": "Listener",
+      "Properties": {
+        "ServiceName": "studyapp-service",
+        "Cluster": {"Ref": "ECSCluster"},
+        "TaskDefinition": {"Ref": "TaskDefinition"},
+        "LaunchType": "FARGATE",
+        "DesiredCount": 1,
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "SecurityGroups": [{"Ref": "SecurityGroup"}],
+            "Subnets": {"Ref": "SubnetIds"},
+            "AssignPublicIp": "ENABLED"
+          }
+        },
+        "LoadBalancers": [
+          {
+            "ContainerName": "studyapp-container",
+            "ContainerPort": 8080,
+            "TargetGroupArn": {"Ref": "TargetGroup"}
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "LoadBalancerURL": {
+      "Description": "URL of the load balancer",
+      "Value": {
+        "Fn::Sub": "http://${LoadBalancer.DNSName}"
+      }
+    },
+    "ClusterName": {
+      "Description": "Name of the ECS cluster",
+      "Value": {"Ref": "ECSCluster"}
+    },
+    "ServiceName": {
+      "Description": "Name of the ECS service",
+      "Value": {"Ref": "ECSService"}
+    }
+  }
+}

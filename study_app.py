@@ -1164,19 +1164,27 @@ def main(page: ft.Page):
 
 # To run the app
 if __name__ == "__main__":
-    # Check if running in web environment (AWS App Runner, etc.)
+    # Check if running in web environment (AWS App Runner, ECS, etc.)
     import os
     port = int(os.environ.get('PORT', 8080))
     
-    if os.environ.get('AWS_EXECUTION_ENV') or os.environ.get('PORT'):
-        # Running on AWS or web environment
+    # Health check endpoint for AWS ECS
+    def health_check_handler(request):
+        """Simple health check endpoint for load balancer"""
+        return {"status": "healthy", "port": port}
+    
+    if os.environ.get('AWS_EXECUTION_ENV') or os.environ.get('PORT') or os.environ.get('ECS_CONTAINER_METADATA_URI'):
+        # Running on AWS (App Runner, ECS, or other cloud environment)
+        print(f"🌐 Starting web server on port {port}")
         ft.app(
             target=main,
             port=port,
             host='0.0.0.0',
             view=ft.AppView.WEB_BROWSER,
-            web_renderer=ft.WebRenderer.HTML
+            web_renderer=ft.WebRenderer.HTML,
+            route_url_strategy="hash"
         )
     else:
         # Running locally
+        print("🖥️ Starting desktop application")
         ft.app(target=main)
