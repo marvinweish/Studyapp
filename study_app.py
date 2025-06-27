@@ -365,14 +365,16 @@ def main(page: ft.Page):
                     ft.Text(f"Missing: {', '.join(missing_deps)}", size=font_size_small, color=ft.Colors.AMBER),
                     ft.Text("Install with: pip install " + " ".join(missing_deps), size=font_size_small, color=ft.Colors.BLUE),
                     ft.Container(height=5),
-                    ft.Text("Supported formats: TXT, PDF, DOCX, PPTX, EPUB", size=font_size_small, color=ft.Colors.GREEN)
+                    ft.Text("📄 Supported formats: TXT, PDF, DOCX, PPTX, EPUB", size=font_size_small, color=ft.Colors.GREEN),
+                    ft.Text("🔍 OCR support for image-based PDFs requires: pytesseract, pdf2image, pillow", size=font_size_small - 1, color=ft.Colors.BLUE_GREY)
                 ])
             else:
                 main_view_content.controls.extend([
                     ft.Text("Upload a document to get started.", size=font_size_medium, text_align=ft.TextAlign.CENTER),
                     ft.Container(height=5),
                     ft.Text("✅ All file format dependencies are installed!", size=font_size_small + 2, color=ft.Colors.GREEN),
-                    ft.Text("Supported formats: TXT, PDF, DOCX, PPTX, EPUB", size=font_size_small, color=ft.Colors.GREEN)
+                    ft.Text("📄 Supported formats: TXT, PDF, DOCX, PPTX, EPUB", size=font_size_small, color=ft.Colors.GREEN),
+                    ft.Text("🔍 OCR support available for image-based PDFs", size=font_size_small, color=ft.Colors.GREEN)
                 ])
         else:
             # Show current topic info
@@ -765,8 +767,20 @@ def main(page: ft.Page):
                     show_snack_bar(f"Unsupported file format. Supported formats: {', '.join(get_supported_extensions())}", ft.Colors.RED_400)
                     return
                 
+                # Show different messages for PDF files that might need OCR
+                file_ext = file_path.lower().split('.')[-1]
+                if file_ext == 'pdf':
+                    show_snack_bar("Processing PDF... This may take a moment if OCR is needed.", ft.Colors.BLUE_400)
+                
                 processed_content = processor.process_file(file_path)
-                chapter_objects = organizer.organize_into_chapters(processed_content)
+                
+                # Check if this is OCR-processed content that's already organized
+                if hasattr(processed_content, 'content') and processed_content.file_type == 'pdf':
+                    # For OCR content, organize it into chapters using the organizer
+                    chapter_objects = organizer.organize_into_chapters(processed_content)
+                else:
+                    # For other content types, use the existing flow
+                    chapter_objects = organizer.organize_into_chapters(processed_content)
                 
                 chapters = []
                 for chapter_obj in chapter_objects:
@@ -780,11 +794,23 @@ def main(page: ft.Page):
                 show_loading(False)
                 
                 build_chapter_list_view()
-                show_snack_bar(f"Successfully processed {len(chapters)} chapters from {processed_content.file_type.upper()} file", ft.Colors.GREEN_400)
+                
+                # Provide feedback about OCR if it was used
+                success_message = f"Successfully processed {len(chapters)} chapters from {processed_content.file_type.upper()} file"
+                if file_ext == 'pdf' and len(processed_content.content) > 0:
+                    # Check if content has OCR indicators
+                    if "(OCR)" in processed_content.content or "OCR" in str(processed_content.metadata or {}):
+                        success_message += " (OCR text extraction was used)"
+                
+                show_snack_bar(success_message, ft.Colors.GREEN_400)
 
             except Exception as ex:
                 show_loading(False)
-                show_snack_bar(f"Error processing file: {str(ex)}", ft.Colors.RED_400)
+                error_msg = str(ex)
+                if "OCR" in error_msg:
+                    show_snack_bar(f"OCR processing error: {error_msg}", ft.Colors.RED_400)
+                else:
+                    show_snack_bar(f"Error processing file: {error_msg}", ft.Colors.RED_400)
 
     file_picker = ft.FilePicker(on_result=on_file_picked)
     page.overlay.append(file_picker)

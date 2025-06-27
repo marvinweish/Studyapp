@@ -221,7 +221,19 @@ class FileProcessor:
                     print("PDF appears to be image-based. Attempting OCR...")
                     if OCR_AVAILABLE:
                         try:
-                            content = self._process_pdf_with_ocr(file_path)
+                            ocr_text = self._process_pdf_with_ocr(file_path)
+                            if ocr_text.strip():
+                                # Create a ProcessedContent object for the OCR text to use existing organizing functions
+                                temp_content = ProcessedContent(
+                                    title=metadata.get('title', Path(file_path).stem),
+                                    content=ocr_text,
+                                    file_type='pdf',
+                                    metadata=metadata
+                                )
+                                # Return the organized content
+                                return temp_content
+                            else:
+                                content = ["No readable text found in this PDF after OCR processing."]
                         except Exception as ocr_error:
                             print(f"OCR failed: {ocr_error}")
                             # Fall back to whatever text we could extract
@@ -244,31 +256,118 @@ class FileProcessor:
             metadata=metadata
         )
     
-    def _process_pdf_with_ocr(self, file_path: str) -> List[str]:
-        """Process PDF using OCR for image-based PDFs"""
+    def _process_pdf_with_ocr(self, file_path: str) -> str:
+        """Process PDF using OCR for image-based PDFs and return cleaned combined text"""
         if not OCR_AVAILABLE:
             raise ImportError("OCR dependencies required. Install with: pip install pytesseract pdf2image pillow")
         
         try:
             # Convert PDF pages to images
             images = convert_from_path(file_path)
-            content = []
+            raw_text_chunks = []
             
             for page_num, image in enumerate(images):
                 try:
-                    # Use OCR to extract text from image
-                    text = pytesseract.image_to_string(image, lang='eng')
+                    # Preprocess image to improve OCR accuracy
+                    image = self._preprocess_image_for_ocr(image)
+                    
+                    # Use OCR to extract text from image with better configuration
+                    custom_config = r'--oem 3 --psm 6'  # Better OCR settings
+                    text = pytesseract.image_to_string(image, lang='eng', config=custom_config)
                     if text.strip():
-                        content.append(f"--- Page {page_num + 1} (OCR) ---\n{text.strip()}")
-                    else:
-                        content.append(f"--- Page {page_num + 1} (OCR) ---\nNo text detected on this page")
+                        raw_text_chunks.append(text.strip())
                 except Exception as e:
-                    content.append(f"--- Page {page_num + 1} (OCR Error) ---\nError: {str(e)}")
+                    print(f"OCR error on page {page_num + 1}: {str(e)}")
+                    continue
             
-            return content
+            # Combine all text into one string
+            combined_text = '\n\n'.join(raw_text_chunks)
+            
+            # Clean the OCR artifacts
+            cleaned_text = self._clean_ocr_text(combined_text)
+            
+            return cleaned_text
         
         except Exception as e:
             raise ValueError(f"OCR processing failed: {str(e)}")
+    
+    def _preprocess_image_for_ocr(self, image):
+        """Preprocess image to improve OCR accuracy"""
+        try:
+            from PIL import ImageEnhance, ImageFilter
+            
+            # Convert to grayscale if not already
+            if image.mode != 'L':
+                image = image.convert('L')
+            
+            # Enhance contrast
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(2.0)
+            
+            # Enhance sharpness
+            enhancer = ImageEnhance.Sharpness(image)
+            image = enhancer.enhance(1.5)
+            
+            # Apply slight blur to reduce noise
+            image = image.filter(ImageFilter.MedianFilter(size=1))
+            
+            return image
+        except Exception as e:
+            print(f"Image preprocessing failed: {e}")
+            return image
+
+    def _clean_ocr_text(self, text: str) -> str:
+        """Clean OCR artifacts and improve text quality"""
+        if not text.strip():
+            return text
+        
+        # Remove excessive whitespace and normalize line breaks
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)  # Multiple empty lines to double
+        text = re.sub(r'[ \t]+', ' ', text)  # Multiple spaces/tabs to single space
+        
+        # Fix common OCR character recognition errors
+        ocr_fixes = {
+            r'\b0\b': 'O',  # Zero to O when it's likely a letter
+            r'\bl\b': 'I',  # lowercase l to I when standalone
+            r'\brn\b': 'm',  # common rn/m confusion
+            r'\b1\b(?=[a-zA-Z])': 'l',  # 1 to l when followed by letters
+            r'(?<=[a-zA-Z])\b1\b': 'l',  # 1 to l when preceded by letters
+            r'\bvv\b': 'w',  # double v to w
+            r'\|\|': 'll',  # pipe characters to ll
+            r'["""]': '"',  # Normalize quotes
+            r"[''']": "'",  # Normalize apostrophes
+            r'—': '-',  # Em dash to hyphen
+            r'–': '-',  # En dash to hyphen
+        }
+        
+        for pattern, replacement in ocr_fixes.items():
+            text = re.sub(pattern, replacement, text)
+        
+        # Remove standalone special characters that are likely OCR errors
+        text = re.sub(r'\n[^\w\s]{1,3}\n', '\n', text)
+        
+        # Fix broken words (letters separated by spaces)
+        text = re.sub(r'\b([a-zA-Z])\s+([a-zA-Z])\s+([a-zA-Z])\b', r'\1\2\3', text)
+        
+        # Remove page numbers and headers/footers (common patterns)
+        text = re.sub(r'\n\s*\d+\s*\n', '\n', text)  # Standalone page numbers
+        text = re.sub(r'\n\s*Page\s+\d+\s*\n', '\n', text, re.IGNORECASE)
+        
+        # Remove short lines that are likely artifacts (less than 3 characters)
+        lines = text.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            line = line.strip()
+            if len(line) >= 3 or line == '':  # Keep empty lines for paragraph breaks
+                cleaned_lines.append(line)
+        
+        text = '\n'.join(cleaned_lines)
+        
+        # Final cleanup - normalize paragraph breaks
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
+        text = text.strip()
+        
+        return text
     
     def _process_docx(self, file_path: str) -> ProcessedContent:
         """Process Word documents"""
@@ -282,7 +381,7 @@ class FileProcessor:
             for paragraph in doc.paragraphs:
                 if paragraph.text.strip():
                     # Check if it's a heading
-                    if paragraph.style.name.startswith('Heading'):
+                    if paragraph.style and paragraph.style.name and paragraph.style.name.startswith('Heading'):
                         content.append(f"\n{paragraph.text}\n" + "=" * len(paragraph.text))
                     else:
                         content.append(paragraph.text)
@@ -309,8 +408,24 @@ class FileProcessor:
                 slide_content = [f"--- Slide {slide_num} ---"]
                 
                 for shape in slide.shapes:
-                    if hasattr(shape, "text") and shape.text.strip():
-                        slide_content.append(shape.text)
+                    try:
+                        # Use getattr to safely access text properties
+                        text = None
+                        
+                        # Try text_frame.text first (most common for text boxes)
+                        text_frame = getattr(shape, 'text_frame', None)
+                        if text_frame:
+                            text = getattr(text_frame, 'text', None)
+                        
+                        # Fall back to direct text attribute
+                        if not text:
+                            text = getattr(shape, 'text', None)
+                        
+                        if text and text.strip():
+                            slide_content.append(text.strip())
+                    except Exception:
+                        # Skip shapes that cause any errors
+                        continue
                 
                 if len(slide_content) > 1:  # More than just the slide header
                     content.append('\n'.join(slide_content))
@@ -356,35 +471,6 @@ class FileProcessor:
         except Exception as e:
             raise ValueError(f"Error processing EPUB: {str(e)}")
     
-    def _process_image_based_pdf(self, file_path: str) -> ProcessedContent:
-        """Process image-based PDF files using OCR"""
-        if not OCR_AVAILABLE:
-            raise ImportError("pytesseract, pdf2image, and Pillow are required for OCR processing. Install with: pip install pytesseract pdf2image Pillow")
-        
-        content = []
-        metadata = {}
-        
-        try:
-            # Convert PDF pages to images
-            images = convert_from_path(file_path)
-            
-            for i, image in enumerate(images):
-                # Perform OCR on the image
-                text = pytesseract.image_to_string(image)
-                if text.strip():
-                    content.append(f"--- Page {i + 1} ---\n{text}")
-        
-        except Exception as e:
-            raise ValueError(f"Error processing image-based PDF: {str(e)}")
-        
-        return ProcessedContent(
-            title=Path(file_path).stem,
-            content='\n\n'.join(content),
-            file_type='pdf',
-            metadata=metadata
-        )
-
-
 class ContentOrganizer:
     """Organizes processed content into chapters and topics"""
     
