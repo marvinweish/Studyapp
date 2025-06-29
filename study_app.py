@@ -3,6 +3,7 @@ import re
 import asyncio
 import json
 import os
+import sys
 from file_processor import FileProcessor, ContentOrganizer, get_supported_extensions, check_dependencies
 from ai_generator import AIStudyGenerator
 
@@ -557,6 +558,97 @@ def main(page: ft.Page):
         except Exception as ex:
             show_snack_bar(f"Error opening file picker: {str(ex)}", ft.Colors.RED_400)
 
+    # Text input dialog for web users
+    text_input_field = ft.TextField(
+        label="Paste your text content here...",
+        multiline=True,
+        min_lines=10,
+        max_lines=20,
+        expand=True
+    )
+    
+    title_input_field = ft.TextField(
+        label="Document title (optional)",
+        value="Pasted Content"
+    )
+
+    def on_text_submit(e):
+        """Handle text content submission"""
+        text_content = text_input_field.value
+        title = title_input_field.value or "Pasted Content"
+        
+        if not text_content or not text_content.strip():
+            show_snack_bar("Please enter some text content", ft.Colors.RED_400)
+            return
+        
+        try:
+            show_loading(True)
+            text_input_dialog.open = False
+            page.update()
+            
+            # Create a ProcessedContent object
+            from file_processor import ProcessedContent
+            processed_content = ProcessedContent(
+                title=title,
+                content=text_content.strip(),
+                file_type='text'
+            )
+            
+            # Organize into chapters
+            organizer = ContentOrganizer()
+            chapter_objects = organizer.organize_into_chapters(processed_content)
+            
+            chapters = []
+            for chapter_obj in chapter_objects:
+                chapters.append({
+                    "title": chapter_obj.title,
+                    "content": chapter_obj.content
+                })
+            
+            app_state.set_chapters(chapters)
+            app_state.current_topic_title = ""
+            show_loading(False)
+            
+            build_chapter_list_view()
+            show_snack_bar(f"Successfully processed {len(chapters)} chapters from text content", ft.Colors.GREEN_400)
+            
+        except Exception as ex:
+            show_loading(False)
+            show_snack_bar(f"Error processing text: {str(ex)}", ft.Colors.RED_400)
+
+    def close_text_dialog(e):
+        """Close the text input dialog"""
+        text_input_dialog.open = False
+        page.update()
+
+    def open_text_input(e):
+        """Open text input dialog for web users"""
+        text_input_field.value = ""
+        title_input_field.value = "Pasted Content"
+        text_input_dialog.open = True
+        page.update()
+
+    text_input_dialog = ft.AlertDialog(
+        modal=True,
+        title=ft.Text("Enter Text Content"),
+        content=ft.Container(
+            content=ft.Column([
+                title_input_field,
+                ft.Container(height=10),
+                text_input_field,
+            ], spacing=10),
+            width=600,
+            height=500,
+        ),
+        actions=[
+            ft.TextButton("Cancel", on_click=close_text_dialog),
+            ft.ElevatedButton("Process Text", on_click=on_text_submit),
+        ],
+        actions_alignment=ft.MainAxisAlignment.END,
+    )
+    
+    page.overlay.append(text_input_dialog)
+
     # --- App Bar ---
     app_bar = ft.AppBar(
         leading=back_button,
@@ -568,6 +660,12 @@ def main(page: ft.Page):
                 ft.Icons.HOME,
                 on_click=navigate_to_home,
                 tooltip="Home",
+                icon_size=icon_size
+            ),
+            ft.IconButton(
+                ft.Icons.TEXT_FIELDS, 
+                on_click=open_text_input,
+                tooltip="Enter Text Content",
                 icon_size=icon_size
             ),
             ft.IconButton(
@@ -753,10 +851,20 @@ def main(page: ft.Page):
     # --- File Upload Logic ---
     def on_file_picked(e: ft.FilePickerResultEvent):
         if e.files:
-            file_path = e.files[0].path
+            file_info = e.files[0]
+            file_path = file_info.path
+            file_name = file_info.name
+            
             try:
                 show_loading(True)
                 
+                # Check if we're in web mode (file_path is None)
+                if file_path is None:
+                    show_loading(False)
+                    show_snack_bar("Web mode file upload: Please use 'Save as...' to download files locally first, then upload them.", ft.Colors.ORANGE_400)
+                    return
+                
+                # Desktop mode - file path is available
                 processor = FileProcessor()
                 organizer = ContentOrganizer()
                 
@@ -781,7 +889,7 @@ def main(page: ft.Page):
                 
                 build_chapter_list_view()
                 show_snack_bar(f"Successfully processed {len(chapters)} chapters from {processed_content.file_type.upper()} file", ft.Colors.GREEN_400)
-
+                    
             except Exception as ex:
                 show_loading(False)
                 show_snack_bar(f"Error processing file: {str(ex)}", ft.Colors.RED_400)
@@ -1130,4 +1238,18 @@ def main(page: ft.Page):
 
 # To run the app
 if __name__ == "__main__":
-    ft.app(target=main)
+    # Check if running in container environment
+    is_container = (
+        os.getenv('CONTAINER') == 'true' or  # Docker environment variable
+        os.getenv('DISPLAY') is None and not sys.platform.startswith('win') or  # No display on non-Windows
+        os.path.exists('/.dockerenv')  # Docker container indicator
+    )
+    
+    if is_container:
+        # Run as web app in container
+        print("Starting Flet web server on port 8080...")
+        ft.app(target=main, view=ft.WEB_BROWSER, port=8080, host="0.0.0.0")
+    else:
+        # Run as desktop app locally
+        print("Starting Flet desktop app...")
+        ft.app(target=main)
