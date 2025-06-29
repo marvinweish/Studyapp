@@ -1,0 +1,17 @@
+services:
+  studyapp:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    # Alternative: Use secrets (uncomment below and comment env_file above)
+    # secrets:
+    #   - gemini_api_key
+    # environment:
+    #   - GEMINI_API_KEY_FILE=/run/secrets/gemini_api_key
+
+# Uncomment for secrets approach
+# secrets:
+#   gemini_api_key:
+#     file: ./secrets/gemini_api_key.txt

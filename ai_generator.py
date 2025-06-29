@@ -6,8 +6,8 @@ from typing import List, Dict, Any
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from key.env file
-load_dotenv('key.env')
+# Load environment variables from .env file (if it exists)
+load_dotenv()
 
 # Try to import mobile config for mobile compatibility
 try:
@@ -29,15 +29,15 @@ class AIStudyGenerator:
     
     def __init__(self, api_key: str | None = None):
         """Initialize with Gemini API key"""
-        # Priority order: parameter > mobile config > key.env file > config.py > environment variable
+        # Priority order: parameter > environment variable > mobile config > .env file > config.py
         if USE_MOBILE_CONFIG and mobile_config.has_api_key():
             self.api_key = mobile_config.get_api_key()
         else:
             self.api_key = (
                 api_key or 
-                os.getenv('GEMINI_API_KEY') or  # From key.env file (loaded by dotenv)
-                GEMINI_API_KEY or               # From config.py
-                os.environ.get('GEMINI_API_KEY') # From system environment
+                os.environ.get('GEMINI_API_KEY') or  # From system environment (Docker)
+                os.getenv('GEMINI_API_KEY') or       # From .env file (loaded by dotenv)
+                GEMINI_API_KEY                       # From config.py
             )
         
         if self.api_key:
