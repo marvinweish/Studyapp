@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # Comments are provided throughout this file to help you get started.
 # If you need more help, visit the Dockerfile reference guide at
 # https://docs.docker.com/go/dockerfile-reference/
@@ -32,13 +30,9 @@ RUN adduser \
     --uid "${UID}" \
     appuser
 
-# Download dependencies as a separate step to take advantage of Docker's caching.
-# Leverage a cache mount to /root/.cache/pip to speed up subsequent builds.
-# Leverage a bind mount to requirements.txt to avoid having to copy them into
-# into this layer.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,source=requirements.txt,target=requirements.txt \
-    python -m pip install -r requirements.txt
+# Copy requirements file and install dependencies
+COPY requirements.txt .
+RUN python -m pip install --no-cache-dir -r requirements.txt
 
 # Install flet with all components to prevent runtime installation
 RUN python -m pip install 'flet[all]>=0.24.0' --no-cache-dir
@@ -54,7 +48,7 @@ USER appuser
 COPY . .
 
 # Expose the port that the application listens on.
-EXPOSE 8000
+EXPOSE 8080
 
-# Run the application.
-CMD ["python", "study_app.py"]
+# Run the application with GCP-compatible entry point.
+CMD ["python", "app_gcp.py"]
