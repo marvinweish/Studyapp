@@ -3,61 +3,8 @@ import re
 import asyncio
 import json
 import os
-import logging
-
-# GCP configuration import
-try:
-    from config_gcp import IS_GCP, TEMP_DIR, ENABLE_STRUCTURED_LOGGING
-    if ENABLE_STRUCTURED_LOGGING:
-        try:
-            import google.cloud.logging
-            client = google.cloud.logging.Client()
-            client.setup_logging()
-        except ImportError:
-            logging.basicConfig(level=logging.INFO)
-except ImportError:
-    IS_GCP = False
-    TEMP_DIR = "temp"
-    ENABLE_STRUCTURED_LOGGING = False
-
-# Mobile-compatible imports with fallbacks
-try:
-    from mobile_file_processor import FileProcessor, ContentOrganizer, get_supported_extensions, check_dependencies
-    from mobile_ai_generator import AIStudyGenerator
-    print("✅ Using mobile-compatible modules")
-except ImportError:
-    print("📱 Mobile modules not found, using desktop versions")
-    try:
-        from file_processor import FileProcessor, ContentOrganizer, get_supported_extensions, check_dependencies
-        from ai_generator import AIStudyGenerator
-    except ImportError:
-        print("⚠️ Desktop modules not found, using GCP fallback")
-        # Use GCP-compatible versions
-        from gcp_ai_generator import ai_generator as AIStudyGenerator
-
-        # Mock file processor for GCP
-        class FileProcessor:
-            def is_supported(self, file_path): 
-                return file_path.lower().endswith(('.txt', '.pdf'))
-            
-            def process_file(self, file_path): 
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-                    return type('obj', (object,), {'content': content, 'file_type': 'txt'})
-
-        class ContentOrganizer:
-            def organize_into_chapters(self, content):
-                # Simple chapter organization
-                text = content.content if hasattr(content, 'content') else str(content)
-                chunks = [text[i:i+2000] for i in range(0, len(text), 2000)]
-                return [type('obj', (object,), {'title': f'Section {i+1}', 'content': chunk}) 
-                       for i, chunk in enumerate(chunks)]
-
-        def get_supported_extensions(): 
-            return ['txt', 'pdf']
-        
-        def check_dependencies(): 
-            return []
+from file_processor import FileProcessor, ContentOrganizer, get_supported_extensions, check_dependencies
+from ai_generator import AIStudyGenerator
 
 # A simple class to hold the state of our application
 class AppState:
@@ -74,7 +21,7 @@ class AppState:
         self.current_chapter_index = None  # Track current chapter
         self.saved_topics = []  # Store previously uploaded topics
         self.current_topic_title = ""  # Current topic title
-        self.topics_file = os.path.join(TEMP_DIR, "saved_topics.json")  # Use temp directory
+        self.topics_file = "saved_topics.json"  # File to persist topics
 
     def set_chapters(self, chapters):
         self.chapters = chapters
@@ -163,12 +110,7 @@ class AppState:
         return False
 
 app_state = AppState()
-
-# Initialize AI generator - prefer GCP version in cloud environments
-if IS_GCP:
-    from gcp_ai_generator import ai_generator
-else:
-    ai_generator = AIStudyGenerator()  # Initialize AI generator
+ai_generator = AIStudyGenerator()  # Initialize AI generator
 
 def main(page: ft.Page):
     page.title = "AI Study Buddy"
@@ -423,16 +365,14 @@ def main(page: ft.Page):
                     ft.Text(f"Missing: {', '.join(missing_deps)}", size=font_size_small, color=ft.Colors.AMBER),
                     ft.Text("Install with: pip install " + " ".join(missing_deps), size=font_size_small, color=ft.Colors.BLUE),
                     ft.Container(height=5),
-                    ft.Text("📄 Supported formats: TXT, PDF, DOCX, PPTX, EPUB", size=font_size_small, color=ft.Colors.GREEN),
-                    ft.Text("🔍 OCR support for image-based PDFs requires: pytesseract, pdf2image, pillow", size=font_size_small - 1, color=ft.Colors.BLUE_GREY)
+                    ft.Text("Supported formats: TXT, PDF, DOCX, PPTX, EPUB", size=font_size_small, color=ft.Colors.GREEN)
                 ])
             else:
                 main_view_content.controls.extend([
                     ft.Text("Upload a document to get started.", size=font_size_medium, text_align=ft.TextAlign.CENTER),
                     ft.Container(height=5),
                     ft.Text("✅ All file format dependencies are installed!", size=font_size_small + 2, color=ft.Colors.GREEN),
-                    ft.Text("📄 Supported formats: TXT, PDF, DOCX, PPTX, EPUB", size=font_size_small, color=ft.Colors.GREEN),
-                    ft.Text("🔍 OCR support available for image-based PDFs", size=font_size_small, color=ft.Colors.GREEN)
+                    ft.Text("Supported formats: TXT, PDF, DOCX, PPTX, EPUB", size=font_size_small, color=ft.Colors.GREEN)
                 ])
         else:
             # Show current topic info
@@ -825,20 +765,8 @@ def main(page: ft.Page):
                     show_snack_bar(f"Unsupported file format. Supported formats: {', '.join(get_supported_extensions())}", ft.Colors.RED_400)
                     return
                 
-                # Show different messages for PDF files that might need OCR
-                file_ext = file_path.lower().split('.')[-1]
-                if file_ext == 'pdf':
-                    show_snack_bar("Processing PDF... This may take a moment if OCR is needed.", ft.Colors.BLUE_400)
-                
                 processed_content = processor.process_file(file_path)
-                
-                # Check if this is OCR-processed content that's already organized
-                if hasattr(processed_content, 'content') and processed_content.file_type == 'pdf':
-                    # For OCR content, organize it into chapters using the organizer
-                    chapter_objects = organizer.organize_into_chapters(processed_content)
-                else:
-                    # For other content types, use the existing flow
-                    chapter_objects = organizer.organize_into_chapters(processed_content)
+                chapter_objects = organizer.organize_into_chapters(processed_content)
                 
                 chapters = []
                 for chapter_obj in chapter_objects:
@@ -852,23 +780,11 @@ def main(page: ft.Page):
                 show_loading(False)
                 
                 build_chapter_list_view()
-                
-                # Provide feedback about OCR if it was used
-                success_message = f"Successfully processed {len(chapters)} chapters from {processed_content.file_type.upper()} file"
-                if file_ext == 'pdf' and len(processed_content.content) > 0:
-                    # Check if content has OCR indicators
-                    if "(OCR)" in processed_content.content or "OCR" in str(processed_content.metadata or {}):
-                        success_message += " (OCR text extraction was used)"
-                
-                show_snack_bar(success_message, ft.Colors.GREEN_400)
+                show_snack_bar(f"Successfully processed {len(chapters)} chapters from {processed_content.file_type.upper()} file", ft.Colors.GREEN_400)
 
             except Exception as ex:
                 show_loading(False)
-                error_msg = str(ex)
-                if "OCR" in error_msg:
-                    show_snack_bar(f"OCR processing error: {error_msg}", ft.Colors.RED_400)
-                else:
-                    show_snack_bar(f"Error processing file: {error_msg}", ft.Colors.RED_400)
+                show_snack_bar(f"Error processing file: {str(ex)}", ft.Colors.RED_400)
 
     file_picker = ft.FilePicker(on_result=on_file_picked)
     page.overlay.append(file_picker)
@@ -1214,36 +1130,4 @@ def main(page: ft.Page):
 
 # To run the app
 if __name__ == "__main__":
-    # Check if running in GCP environment
-    port = int(os.environ.get('PORT', 8080))
-    
-    # Health check endpoint for GCP
-    def health_check_handler(request):
-        """Simple health check endpoint for load balancer"""
-        return {"status": "healthy", "port": port}
-    
-    # Detect cloud environment
-    is_cloud = bool(
-        os.environ.get('GAE_ENV') or  # Google App Engine
-        os.environ.get('CLOUD_RUN_SERVICE') or  # Google Cloud Run
-        os.environ.get('K_SERVICE') or  # Knative (Cloud Run)
-        os.environ.get('AWS_EXECUTION_ENV') or  # AWS
-        os.environ.get('PORT') or  # General cloud indicator
-        os.environ.get('ECS_CONTAINER_METADATA_URI')  # AWS ECS
-    )
-    
-    if is_cloud:
-        # Running on cloud platform
-        print(f"🌐 Starting web server on port {port}")
-        ft.app(
-            target=main,
-            port=port,
-            host='0.0.0.0',
-            view=ft.AppView.WEB_BROWSER,
-            web_renderer=ft.WebRenderer.HTML,
-            route_url_strategy="hash"
-        )
-    else:
-        # Running locally
-        print("🖥️ Starting desktop application")
-        ft.app(target=main)
+    ft.app(target=main)
