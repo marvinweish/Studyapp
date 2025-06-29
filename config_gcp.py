@@ -1,9 +1,14 @@
-# Configuration file for AI Study Buddy - AWS App Runner Compatible
+# Configuration file for AI Study Buddy - GCP Compatible
 
 import os
 
-# Detect AWS App Runner environment
-IS_AWS_APP_RUNNER = bool(os.environ.get('AWS_EXECUTION_ENV') or os.environ.get('PORT'))
+# Detect GCP environment
+IS_GCP = bool(
+    os.environ.get('GAE_ENV') or  # App Engine
+    os.environ.get('CLOUD_RUN_SERVICE') or  # Cloud Run
+    os.environ.get('K_SERVICE') or  # Cloud Run (Knative)
+    os.environ.get('GOOGLE_CLOUD_PROJECT')  # General GCP
+)
 
 # Gemini API Configuration
 # Priority: Environment variable > config value
@@ -14,10 +19,10 @@ DEFAULT_FLASHCARD_COUNT = 10
 DEFAULT_QUIZ_QUESTIONS = 5
 DEFAULT_TEST_QUESTIONS = 10
 
-# AWS App Runner optimizations
-if IS_AWS_APP_RUNNER:
+# GCP optimizations
+if IS_GCP:
     USE_MOCK_DATA_IF_NO_API = False  # Don't use mock data in production
-    # File storage for temporary files (App Runner has ephemeral storage)
+    # File storage for temporary files (GCP has ephemeral storage)
     TEMP_DIR = "/tmp"
     # Ensure temp directory exists
     os.makedirs(TEMP_DIR, exist_ok=True)
@@ -29,10 +34,13 @@ else:
 # Port configuration for web deployment
 PORT = int(os.environ.get('PORT', 8080))
 
-# App Runner specific settings
+# GCP specific settings
 WEB_RENDERER = os.environ.get('FLET_WEB_RENDERER', 'html')
 
-print(f"🌐 Running in {'AWS App Runner' if IS_AWS_APP_RUNNER else 'Local'} mode")
+# Logging configuration for GCP
+ENABLE_STRUCTURED_LOGGING = IS_GCP
+
+print(f"🌐 Running in {'GCP' if IS_GCP else 'Local'} mode")
 if GEMINI_API_KEY:
     print("✅ Gemini API key configured")
 else:

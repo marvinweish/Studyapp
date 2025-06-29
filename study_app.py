@@ -3,6 +3,22 @@ import re
 import asyncio
 import json
 import os
+import logging
+
+# GCP configuration import
+try:
+    from config_gcp import IS_GCP, TEMP_DIR, ENABLE_STRUCTURED_LOGGING
+    if ENABLE_STRUCTURED_LOGGING:
+        try:
+            import google.cloud.logging
+            client = google.cloud.logging.Client()
+            client.setup_logging()
+        except ImportError:
+            logging.basicConfig(level=logging.INFO)
+except ImportError:
+    IS_GCP = False
+    TEMP_DIR = "temp"
+    ENABLE_STRUCTURED_LOGGING = False
 
 # Mobile-compatible imports with fallbacks
 try:
@@ -11,8 +27,37 @@ try:
     print("✅ Using mobile-compatible modules")
 except ImportError:
     print("📱 Mobile modules not found, using desktop versions")
-    from file_processor import FileProcessor, ContentOrganizer, get_supported_extensions, check_dependencies
-    from ai_generator import AIStudyGenerator
+    try:
+        from file_processor import FileProcessor, ContentOrganizer, get_supported_extensions, check_dependencies
+        from ai_generator import AIStudyGenerator
+    except ImportError:
+        print("⚠️ Desktop modules not found, using GCP fallback")
+        # Use GCP-compatible versions
+        from gcp_ai_generator import ai_generator as AIStudyGenerator
+
+        # Mock file processor for GCP
+        class FileProcessor:
+            def is_supported(self, file_path): 
+                return file_path.lower().endswith(('.txt', '.pdf'))
+            
+            def process_file(self, file_path): 
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    return type('obj', (object,), {'content': content, 'file_type': 'txt'})
+
+        class ContentOrganizer:
+            def organize_into_chapters(self, content):
+                # Simple chapter organization
+                text = content.content if hasattr(content, 'content') else str(content)
+                chunks = [text[i:i+2000] for i in range(0, len(text), 2000)]
+                return [type('obj', (object,), {'title': f'Section {i+1}', 'content': chunk}) 
+                       for i, chunk in enumerate(chunks)]
+
+        def get_supported_extensions(): 
+            return ['txt', 'pdf']
+        
+        def check_dependencies(): 
+            return []
 
 # A simple class to hold the state of our application
 class AppState:
@@ -29,7 +74,7 @@ class AppState:
         self.current_chapter_index = None  # Track current chapter
         self.saved_topics = []  # Store previously uploaded topics
         self.current_topic_title = ""  # Current topic title
-        self.topics_file = "saved_topics.json"  # File to persist topics
+        self.topics_file = os.path.join(TEMP_DIR, "saved_topics.json")  # Use temp directory
 
     def set_chapters(self, chapters):
         self.chapters = chapters
@@ -118,7 +163,12 @@ class AppState:
         return False
 
 app_state = AppState()
-ai_generator = AIStudyGenerator()  # Initialize AI generator
+
+# Initialize AI generator - prefer GCP version in cloud environments
+if IS_GCP:
+    from gcp_ai_generator import ai_generator
+else:
+    ai_generator = AIStudyGenerator()  # Initialize AI generator
 
 def main(page: ft.Page):
     page.title = "AI Study Buddy"
@@ -1164,17 +1214,26 @@ def main(page: ft.Page):
 
 # To run the app
 if __name__ == "__main__":
-    # Check if running in web environment (AWS App Runner, ECS, etc.)
-    import os
+    # Check if running in GCP environment
     port = int(os.environ.get('PORT', 8080))
     
-    # Health check endpoint for AWS ECS
+    # Health check endpoint for GCP
     def health_check_handler(request):
         """Simple health check endpoint for load balancer"""
         return {"status": "healthy", "port": port}
     
-    if os.environ.get('AWS_EXECUTION_ENV') or os.environ.get('PORT') or os.environ.get('ECS_CONTAINER_METADATA_URI'):
-        # Running on AWS (App Runner, ECS, or other cloud environment)
+    # Detect cloud environment
+    is_cloud = bool(
+        os.environ.get('GAE_ENV') or  # Google App Engine
+        os.environ.get('CLOUD_RUN_SERVICE') or  # Google Cloud Run
+        os.environ.get('K_SERVICE') or  # Knative (Cloud Run)
+        os.environ.get('AWS_EXECUTION_ENV') or  # AWS
+        os.environ.get('PORT') or  # General cloud indicator
+        os.environ.get('ECS_CONTAINER_METADATA_URI')  # AWS ECS
+    )
+    
+    if is_cloud:
+        # Running on cloud platform
         print(f"🌐 Starting web server on port {port}")
         ft.app(
             target=main,

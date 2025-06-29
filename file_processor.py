@@ -101,7 +101,7 @@ class Chapter:
     index: int
     subsections: Optional[List['Chapter']] = None
 
-
+@dataclass
 class FileProcessor:
     """Main class for processing various file formats"""
     
